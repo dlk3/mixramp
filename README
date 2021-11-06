@@ -1,0 +1,38 @@
+This package consists of two programs: mixramp and mixramp_tag.
+
+mixramp
+=======
+usage: mixramp <uncompressed_audio_file>
+
+Audio data is read from <uncompressed_audio_file> and MixRamp tags are
+written on stdout. The file format is anything that libaudiofile can
+read.
+
+The gain_analysis files are copied from the mp3gain source code.
+I may change to using libreplaygain if it becomes popular.
+_______________________________________________________________________
+
+mixramp-tag
+===========
+usage: mixramp-tag <compressed_audio_file> ...
+
+MixRamp tags are written into <compressed_audio_file>.
+Currently only FLAC and MP3 files are handled. FLAC files are decoded
+and tagged using flac and metaflac. MP3 files are decoded and tagged
+using mpg123 and eyeD3. All of these programs are assumed to be installed.
+
+It's a script so should be simple to extend.
+
+FLAC tags are MIXRAMP_START, MIXRAMP_END and MIXRAMP_REF.
+MP3 tags are mixramp_start, mixramp_end and mixramp_ref.
+
+MP3 tags
+========
+are a mess. The ones written by mixramp-tag are id3v2.4 UserTextFrame tags.
+These are chosen since these are what is used for replaygain in MPD and others.
+The tagger is eyeD3 and the encoding is set to utf8 so it doesn't break any
+existing tags. You will have to have v2.4 tags or it will fail. eyeD3 can
+convert to v2.4 with the --to-v2.4 command. Please back up your MP3 files
+before you convert and add mixramp tags.
+user-text-frame type
+_______________________________________________________________________

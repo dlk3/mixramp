@@ -1,0 +1,131 @@
+#!/bin/sh
+# A script to add mixramp tags for audio files that support metadata.
+# Currently supports FLAC.
+NAME="${0##*/}"
+ANALYZER="${NAME%%-tag}"
+
+usage() {
+    echo "usage: $NAME <audio_file> ..."
+    echo "<audio_file>s should end in .flac or .mp3"
+}
+
+# Check args.
+if [ 0 = $# ]
+    then
+    usage
+    exit 1
+fi
+
+for FILE in "$@"
+do
+# Check file type is supported.
+  TYPE="${FILE##*.}"
+  case "$TYPE" in
+      (flac)
+      TAGGER=metaflac
+      DUMPER=flac
+      DUMPFLAGS="--decode --silent --stdout"
+      ;;
+      (mp3)
+      TAGGER=eyeD3
+      DUMPER=mpg123
+      DUMPFLAGS="--quiet --wav -"
+      ;;
+      (*)
+      echo "$NAME: file type of $FILE not recognized."
+      usage
+      exit 2
+      ;;
+  esac
+  
+# Check file is writeable.
+  if ! [ -w "$FILE" ]
+      then
+      echo "$NAME: $FILE is not writeable."
+      exit 3
+  fi
+  
+# Check tagger is available.
+  if ! type "$TAGGER" > /dev/null
+      then
+      echo "$NAME: $TAGGER not found."
+      exit 4
+  fi
+  
+# Check dumper is available.
+  if ! type "$DUMPER" > /dev/null
+      then
+      echo "$NAME: $DUMPER not found."
+      exit 5
+  fi
+  
+# Check analyzer is available.
+  if ! type "$ANALYZER" > /dev/null
+      then
+      echo "$NAME: $ANALYZER not found."
+      exit 6
+  fi
+  
+# Dump to wav.
+  WAV=$(mktemp) || exit 7
+  trap 'rm -f "$WAV"' 0
+  "$DUMPER" $DUMPFLAGS "$FILE" > "$WAV" || exit 8
+  
+# Analyze and capture tags.
+  TAG=$(mktemp) || exit 9
+  trap 'rm -f "$WAV" "$TAG"' 0
+  "$ANALYZER" "$WAV" > "$TAG" || exit 10
+  rm -f "$WAV"
+  
+# Check tags.
+  MIXRAMP_START=$(grep MIXRAMP_START= "$TAG")
+  if [ 0 != $? ]
+      then
+      echo "$NAME: analyzer $ANALYZER did not print a MIXRAMP_START tag."
+      exit 11
+  fi
+  MIXRAMP_END=$(grep MIXRAMP_END= "$TAG")
+  if [ 0 != $? ]
+      then
+      echo "$NAME: analyzer $ANALYZER did not print a MIXRAMP_END tag."
+      exit 12
+  fi
+  MIXRAMP_REF=$(grep MIXRAMP_REF= "$TAG")
+  if [ 0 != $? ]
+      then
+      echo "$NAME: analyzer $ANALYZER did not print a MIXRAMP_REF tag."
+      exit 13
+  fi
+  rm -f "$TAG"
+
+# Strip tag names.
+  MIXRAMP_START="${MIXRAMP_START#MIXRAMP_START=}"
+  MIXRAMP_END="${MIXRAMP_END#MIXRAMP_END=}"
+  MIXRAMP_REF="${MIXRAMP_REF#MIXRAMP_REF=}"
+
+# Apply tags.
+  case "$TYPE" in
+      (flac)
+      "$TAGGER" \
+          --remove-tag=MIXRAMP_START \
+          --set-tag=MIXRAMP_START="$MIXRAMP_START" \
+          --remove-tag=MIXRAMP_END \
+          --set-tag=MIXRAMP_END="$MIXRAMP_END" \
+          --remove-tag=MIXRAMP_REF \
+          --set-tag=MIXRAMP_REF="$MIXRAMP_REF" \
+          "$FILE" || exit 14 
+          ;;
+      (mp3)
+      "$TAGGER" \
+          --set-encoding=utf8 \
+          --set-user-text-frame=mixramp_start:"$MIXRAMP_START" \
+          --set-user-text-frame=mixramp_end:"$MIXRAMP_END" \
+          --set-user-text-frame=mixramp_ref:"$MIXRAMP_REF" \
+          "$FILE" > /dev/null || exit 14 
+          ;;
+  esac
+  
+done
+
+# Profit!
+exit 0
