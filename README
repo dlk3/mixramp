@@ -1,4 +1,4 @@
-This package consists of two programs: mixramp and mixramp_tag.
+This package consists of two programs: mixramp and mixramp-tag.
 
 mixramp
 =======
@@ -17,13 +17,14 @@ mixramp-tag
 usage: mixramp-tag <compressed_audio_file> ...
 
 MixRamp tags are written into <compressed_audio_file>.
-Currently only FLAC and MP3 files are handled. FLAC files are decoded
-and tagged using flac and metaflac. MP3 files are decoded and tagged
-using mpg123 and eyeD3. All of these programs are assumed to be installed.
+Currently only FLAC, OGG and MP3 files are handled. FLAC files are decoded
+and tagged using flac and metaflac. OGG files are decoded and tagged using 
+oggdec and vorbis comment.  MP3 files are decoded and tagged using mpg123 
+and eyeD3. All of these programs are assumed to be installed.
 
 It's a script so should be simple to extend.
 
-FLAC tags are MIXRAMP_START, MIXRAMP_END and MIXRAMP_REF.
+FLAC and OGG tags are MIXRAMP_START, MIXRAMP_END and MIXRAMP_REF.
 MP3 tags are mixramp_start, mixramp_end and mixramp_ref.
 
 MP3 tags
@@ -34,5 +35,4 @@ The tagger is eyeD3 and the encoding is set to utf8 so it doesn't break any
 existing tags. You will have to have v2.4 tags or it will fail. eyeD3 can
 convert to v2.4 with the --to-v2.4 command. Please back up your MP3 files
 before you convert and add mixramp tags.
-user-text-frame type
 _______________________________________________________________________

@@ -1,12 +1,12 @@
 #!/bin/sh
 # A script to add mixramp tags for audio files that support metadata.
-# Currently supports FLAC.
+# Currently supports FLAC, OGG and MP3.
 NAME="${0##*/}"
 ANALYZER="${NAME%%-tag}"
 
 usage() {
     echo "usage: $NAME <audio_file> ..."
-    echo "<audio_file>s should end in .flac or .mp3"
+    echo "<audio_file>s should end in .flac, .ogg or .mp3"
 }
 
 # Check args.
@@ -30,6 +30,11 @@ do
       TAGGER=eyeD3
       DUMPER=mpg123
       DUMPFLAGS="--quiet --wav -"
+      ;;
+      (ogg)
+      TAGGER=vorbiscomment
+      DUMPER=oggdec
+      DUMPFLAGS="--quiet -o -"
       ;;
       (*)
       echo "$NAME: file type of $FILE not recognized."
@@ -117,12 +122,33 @@ do
           ;;
       (mp3)
       "$TAGGER" \
-          --set-encoding=utf8 \
-          --set-user-text-frame=mixramp_start:"$MIXRAMP_START" \
-          --set-user-text-frame=mixramp_end:"$MIXRAMP_END" \
-          --set-user-text-frame=mixramp_ref:"$MIXRAMP_REF" \
+          --encoding=utf8 \
+          --user-text-frame=mixramp_start:"$MIXRAMP_START" \
+          --user-text-frame=mixramp_end:"$MIXRAMP_END" \
+          --user-text-frame=mixramp_ref:"$MIXRAMP_REF" \
           "$FILE" > /dev/null || exit 14 
           ;;
+      (ogg)
+        OGGTAGS=$(mktemp) || exit 14
+
+        #dump tags to file
+        "$TAGGER" -c "$OGGTAGS" "$FILE" || exit 14
+
+        #remove old mixramp tags
+        sed '/^MIXRAMP_\(START\|END\|REF\)=.*$/d' -i "$OGGTAGS"
+
+        #add new mixramp tags
+        cat >> "$OGGTAGS" <<EOF
+MIXRAMP_START=$MIXRAMP_START
+MIXRAMP_END=$MIXRAMP_END
+MIXRAMP_REF=$MIXRAMP_REF
+EOF
+
+        #overwrite ogg tags
+        "$TAGGER" -c "$OGGTAGS" -w "$FILE" || exit 14
+
+        rm -f "$OGGTAGS"
+        ;;
   esac
   
 done
