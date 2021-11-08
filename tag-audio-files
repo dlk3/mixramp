@@ -1,0 +1,300 @@
+#!/usr/bin/env python
+
+#################################################################################
+#  Copyright (C) 2021  David King <dave@daveking.com>
+#
+#  This Source Code Form is subject to the terms of the Mozilla Public License,
+#  v. 2.0.  If a copy of the MPL was not distbuted with this file, You can
+#  obtain one at https://mozilla.org/MPL/2.0/.
+#################################################################################
+#  Set missing ReplayGain, MixRamp, and BPM metadata tags in audio files
+#################################################################################
+
+import datetime
+import json
+import pathlib
+from optparse import OptionParser
+import os
+import shlex
+import shutil
+import subprocess
+import tempfile
+
+#  File types (extsnions) we support.
+#  Strings specified here must be lower case. 
+supported_extensions = ['.flac', '.mp3', '.ogg']
+
+#  List of other applications we depend on with pointers to sources
+dependencies = [
+	{
+		'name': 'ffmpeg',
+		'source': 'provided by the "ffmpeg" package in Fedora' 
+	},
+	{
+		'name': 'ffprobe',
+		'source': 'provided by the "ffmpeg" package in Fedora' 
+	},
+	{
+		'name': 'loudgain',
+		'source': 'provided by the "loudgain" package in Fedora' 
+	},
+		{
+		'name': 'mixramp',
+		'source': 'compiled from source from https://aur.archlinux.org/packages/mixramp/'
+	},
+	{
+		'name': 'sox',
+		'source': 'provided by the "sox" package in Fedora' 
+	},
+	{
+		'name': 'bpm',
+		'source': 'compiled from source from http://www.pogo.org.uk/~mark/bpm-tools/' 
+	},
+	{
+		'name': 'metaflac',
+		'source': 'provided by the "flac" package in Fedora' 
+	},
+	{
+		'name': 'vorbiscomment',
+		'source': 'provided by the "vorbis-tools" package in Fedora' 
+	},
+	{
+		'name': 'eyeD3',
+		'source': 'provided by the "python3-eyed3" package in Fedora' 
+	}
+]
+
+#  write console/log messages
+def log(message):
+	timestamp = datetime.datetime.now().strftime('%Y%m%d %H:%M:%S')
+	if opts.logfile:
+		with open(opts.logfile, 'a') as f:
+			f.write('{} {}\n'.format(timestamp, message))
+	if not opts.quiet:
+		print('{} {}'.format(timestamp, message))
+
+#  check to see if a system command exists
+def command_exists(command):
+	if shutil.which(command['name']):
+		return True
+	log('This script requires the "{}" command {}'.format(command['name'], command['source']))
+	exit(1)
+
+#  Use ffprobe to see if a file contains replaygain, mixramp and bpm metadata tags
+def check_metadata(fn):
+	has_replaygain = False
+	has_mixramp = False
+	has_bpm = False
+	ext = os.path.splitext(fn.lower())[1]
+	if ext == '.ogg':
+		option = "-show_streams"
+	else:
+		option = '-show_format'		
+	proc = subprocess.run('ffprobe -v quiet -print_format json {} "{}"'.format(option, fn), shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+	if ext == '.ogg':
+		metadata = {}
+		for stream in json.loads(proc.stdout)['streams']:
+			if stream['codec_type'] == 'audio':
+				metadata = stream
+	else:
+		metadata = json.loads(proc.stdout)['format']
+	if 'tags' in metadata:
+		#  Convert all tag keys to upper case
+		tags = set(tag.upper() for tag in metadata['tags'])
+		#  Check to see if all the replaygain tags exist
+		if all (key in tags for key in ("REPLAYGAIN_ALBUM_GAIN", "REPLAYGAIN_ALBUM_PEAK", "REPLAYGAIN_ALBUM_RANGE", "REPLAYGAIN_REFERENCE_LOUDNESS", "REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "REPLAYGAIN_TRACK_RANGE")):
+			has_replaygain = True
+		#  Check to see if all the mixramp tags exist
+		if all (key in tags for key in ("MIXRAMP_START", "MIXRAMP_END", "MIXRAMP_REF")):
+			has_mixramp = True
+		#  Check to see if the bpm tag exists
+		if ext == '.mp3' and "TBPM" in tags:
+			has_bpm = True
+		if "BPM" in tags:
+			has_bpm = True
+	return has_replaygain, has_mixramp, has_bpm
+
+#  Given a list of files, decide which ones need what tags added
+def process_files(filelist):				
+	
+	#  Weed out the files that are not audio files
+	for fn in filelist:
+		if not os.path.splitext(fn.lower())[1] in supported_extensions:
+			filelist.remove(fn)
+		
+	if opts.replace:
+		#  Replace all tags
+		for fn in filelist:
+			mixramp(fn)
+			bpm(fn)
+		replaygain(filelist)
+	else:
+		#  Only add the missing tags
+		do_replaygain = False
+		for fn in filelist:
+			has_replaygain, has_mixramp, has_bpm = check_metadata(fn)
+			if not has_replaygain:
+				do_replaygain = True
+			if not has_mixramp:
+				mixramp(fn)
+			if not has_bpm:
+				bpm(fn)
+		if do_replaygain:
+			replaygain(filelist)
+
+#  Set replaygain tags across a list of files
+def replaygain(filelist):
+	log('Adding ReplayGain tags to {} ...\n'.format(', '.join(filelist)))
+	
+	#  Generic function to run loadgain with different options for different filetypes
+	def run_loudgain(options, filetypes):
+		fl = []
+		for fn in filelist:
+			if os.path.splitext(fn.lower())[1] in filetypes:
+				fl.append(fn)
+		if len(fl) > 0:
+			cmd = shlex.split('loudgain ' + options)
+			cmd.extend(fl)
+			try:
+				proc = subprocess.run(cmd, check=True, capture_output=opts.quiet)
+				if opts.quiet and opts.logfile:
+					log(proc.stdout)
+			except subprocess.CalledProcessError as e:
+				log(e)
+				if e.stdout:
+					log('STDOUT:\n' + e.stdout.decode('utf-8'))
+				if e.stderr:
+					log('STDERR:\n' + e.stderr.decode('utf-8'))
+			
+	
+	#  Process FLAC + OGG, MP3, and M4A files seperately, using different options
+	run_loudgain('-a -k -s e', ['.flac', '.ogg'])
+	run_loudgain('-I3 -S -L -a -k -s e', ['.mp3'])
+	run_loudgain('-L -a -k -s e', ['.m4a'])
+	
+#  Set mixramp tags in a file
+def mixramp(fn):
+	log('Adding MixRamp tags to {} ...'.format(fn))
+	
+	try:
+		#  Convert the file to a WAV
+		tmp_wav = tempfile.NamedTemporaryFile(suffix='.wav').name
+		subprocess.run('ffmpeg -y -v quiet -i "{}" {}'.format(fn, tmp_wav), shell=True, check=True)
+	
+		#  Get the mixramp tag values
+		proc = subprocess.run('mixramp {}'.format(tmp_wav), shell=True, check=True, capture_output=True)
+		tags = proc.stdout.decode('utf-8').strip().split('\n')
+		
+		#  Put the tags into the audio file
+		write_tags(fn, tags)
+		
+		#  Remove the WAV file
+		os.unlink(tmp_wav)
+		
+	except subprocess.CalledProcessError as e:
+		log(e)
+		if e.stdout:
+			log('STDOUT:\n' + e.stdout.decode('utf-8'))
+		if e.stderr:
+			log('STDERR:\n' + e.stderr.decode('utf-8'))
+	
+#  Set bpm tag in a file
+def bpm(fn):
+	log('Adding BPM tag to {} ...'.format(fn))
+	try:
+		#  Get the BPM value
+		proc = subprocess.run('sox -V1 "{}" -r 44100 -e float -c 1 -t raw - | bpm $ARGS'.format(fn), shell=True, check=True, capture_output=True)
+	
+		#  Put the tag into the audio file
+		write_tags(fn, [ 'BPM={}'.format(proc.stdout.decode('utf-8').strip()) ]) 
+
+	except subprocess.CalledProcessError as e:
+		log(e)
+		if e.stdout:
+			log('STDOUT:\n' + e.stdout.decode('utf-8'))
+		if e.stderr:
+			log('STDERR:\n' + e.stderr.decode('utf-8'))
+
+#  Use various tools, depending on filetype, to put tags into files
+def write_tags(filename, taglist):
+	try:
+		ext = os.path.splitext(filename.lower())[1]
+		
+		if ext == '.flac':
+			options = ''
+			for tag in taglist:
+				key, value = tag.split('=')
+				options = options + ' --remove-tag={} --set-tag={}="{}"'.format(key, key, value)
+			subprocess.run('metaflac {} "{}"'.format(options, filename), shell=True, check=True, capture_output=True)
+		elif ext == '.ogg':
+			for tag in taglist:
+				key, value = tag.split('=')
+				#  Delete and then append to avoid duplicate tags
+				subprocess.run('vorbiscomment -d "{}" "{}"'.format(key, filename), shell=True, check=True, capture_output=True)
+				subprocess.run('vorbiscomment -t "{}" -a "{}"'.format(tag, filename), shell=True, check=True, capture_output=True)
+		elif ext == '.mp3': 
+			options = ''
+			for tag in taglist:
+				key, value = tag.split('=')
+				if key == 'BPM':
+					#  For bpm tag
+					options = options + ' --bpm "{}"'.format(value)
+				else:
+					#  for mixramp tags
+					options = options + ' --user-text-frame {}:"{}"'.format(key.lower(), value)
+			subprocess.run('eyeD3 --encoding=utf8 {} "{}"'.format(options, filename), shell=True, check=True, capture_output=True)
+		for tag in taglist:
+			log(tag)
+			
+	except subprocess.CalledProcessError as e:
+		log(e)
+		if e.stdout:
+			log('STDOUT:\n' + e.stdout.decode('utf-8'))
+		if e.stderr:
+			log('STDERR:\n' + e.stderr.decode('utf-8'))
+			
+if __name__ == "__main__":
+
+	#  Process command line arguments and options
+	cmdline = OptionParser(usage="usage: %prog [options] directory", description='Set missing ReplayGain, MixRamp, and BPM metadata tags in the FLAC, OGG, and MP3 files found in the specified directory and its subdirectories.  By default this script only adds missing tags.  Use the "-r" option to replace the existing tags.')
+	cmdline.add_option('-r', '--replace', action='store_true', dest='replace', default=False, help='Replace any existing tags')    
+	cmdline.add_option('-q', '--quiet', action='store_true', dest='quiet', default=False, help='Do not print any log messages on the console')    
+	cmdline.add_option('-l', '--log', dest='logfile', metavar='FILE', help='Write log messages into this file')
+	opts, args = cmdline.parse_args()
+	folder = ''
+	if len(args) > 0:
+		folder = ' '.join(args)
+	else:
+		cmdline.print_usage()
+		exit()
+	if not os.path.isdir(folder):
+		log('"{}" is not a directory or does not exist.'.format(folder))
+		exit(1)
+
+	#  Check for required programs
+	for command in dependencies:
+		command_exists(command)
+	
+	#  Scan all of the directories under <folder> and process the list of
+	#  the files that each directory contains.  (We're assuming that each
+	#  lowest-level folder contains multiple songs from the same album
+	#  and that replaygain's album volume level tags should take all of
+	#  those songs into account)
+	
+	#  process any files in the top level folder
+	for root, dirs, files in os.walk(folder):
+		log('Processing directory "{}" ...'.format(root))
+		if len(files) > 0:
+			filelist = sorted([ os.path.join(root, n) for n in files ])
+			process_files(filelist)
+		break
+
+	#  process the files in all the subdirectories of the top level folder
+	for root, dirs, files in os.walk(folder):
+		for path in dirs:
+			log('Processing directory "{}" ...'.format(os.path.join(root, path)))
+			for r, d, f in os.walk(os.path.join(root, path)):
+				filelist = sorted([ os.path.join(r, n) for n in f ])
+				process_files(filelist)
+				
+
