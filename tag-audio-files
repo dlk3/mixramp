@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import tempfile
 
-#  File types (extsnions) we support.
+#  File types (extensions) we support.
 #  Strings specified here must be lower case. 
 supported_extensions = ['.flac', '.mp3', '.ogg']
 
@@ -85,43 +85,56 @@ def check_metadata(fn):
 	has_replaygain = False
 	has_mixramp = False
 	has_bpm = False
-	ext = os.path.splitext(fn.lower())[1]
-	if ext == '.ogg':
-		option = "-show_streams"
-	else:
-		option = '-show_format'		
-	proc = subprocess.run('ffprobe -v quiet -print_format json {} "{}"'.format(option, fn), shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-	if ext == '.ogg':
+	try:
+		ext = pathlib.Path(fn).suffix.lower()
+		if ext == '.ogg':
+			option = "-show_streams"
+		else:
+			option = '-show_format'		
+		proc = subprocess.run('ffprobe -v quiet -print_format json {} \"{}\"'.format(option, fn), shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 		metadata = {}
-		for stream in json.loads(proc.stdout)['streams']:
-			if stream['codec_type'] == 'audio':
-				metadata = stream
-	else:
-		metadata = json.loads(proc.stdout)['format']
-	if 'tags' in metadata:
-		#  Convert all tag keys to upper case
-		tags = set(tag.upper() for tag in metadata['tags'])
-		#  Check to see if all the replaygain tags exist
-		if all (key in tags for key in ("REPLAYGAIN_ALBUM_GAIN", "REPLAYGAIN_ALBUM_PEAK", "REPLAYGAIN_ALBUM_RANGE", "REPLAYGAIN_REFERENCE_LOUDNESS", "REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "REPLAYGAIN_TRACK_RANGE")):
-			has_replaygain = True
-		#  Check to see if all the mixramp tags exist
-		if all (key in tags for key in ("MIXRAMP_START", "MIXRAMP_END", "MIXRAMP_REF")):
-			has_mixramp = True
-		#  Check to see if the bpm tag exists
-		if ext == '.mp3' and "TBPM" in tags:
-			has_bpm = True
-		if "BPM" in tags:
-			has_bpm = True
-	return has_replaygain, has_mixramp, has_bpm
+		if ext == '.ogg':
+			for stream in json.loads(proc.stdout)['streams']:
+				if stream['codec_type'] == 'audio':
+					metadata = stream
+		else:
+			metadata = json.loads(proc.stdout)['format']
+		if 'tags' in metadata:
+			#  Convert all tag keys to upper case
+			tags = set(tag.upper() for tag in metadata['tags'])
+			#  Check to see if all the replaygain tags exist
+			if all (key in tags for key in ("REPLAYGAIN_ALBUM_GAIN", "REPLAYGAIN_ALBUM_PEAK", "REPLAYGAIN_ALBUM_RANGE", "REPLAYGAIN_REFERENCE_LOUDNESS", "REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "REPLAYGAIN_TRACK_RANGE")):
+				has_replaygain = True
+			#  Check to see if all the mixramp tags exist
+			if all (key in tags for key in ("MIXRAMP_START", "MIXRAMP_END", "MIXRAMP_REF")):
+				has_mixramp = True
+			#  Check to see if the bpm tag exists
+			if ext == '.mp3' and "TBPM" in tags:
+				has_bpm = True
+			if "BPM" in tags:
+				has_bpm = True
+	except subprocess.CalledProcessError as e:
+		log(e)
+		if e.stdout:
+			log('STDOUT:\n' + e.stdout.decode('utf-8'))
+		if e.stderr:
+			log('STDERR:\n' + e.stderr.decode('utf-8'))
+	except Exception as e:
+		log('Unexpected error while checking for existing metadata tags in "{}"'.format(fn))
+		log(e)
+		if proc.stdout:
+			log('FFPROBE STDOUT:\n' + proc.stdout)
+		if proc.stderr:
+			log('FFPROBE STDERR:\n' + proc.stdout)
+	finally:
+		return has_replaygain, has_mixramp, has_bpm
 
 #  Given a list of files, decide which ones need what tags added
 def process_files(filelist):				
 	
 	#  Weed out the files that are not audio files
-	for fn in filelist:
-		if not os.path.splitext(fn.lower())[1] in supported_extensions:
-			filelist.remove(fn)
-		
+	filelist = [fn for fn in filelist if pathlib.Path(fn).suffix.lower() in supported_extensions]
+
 	if opts.replace:
 		#  Replace all tags
 		for fn in filelist:
@@ -150,7 +163,7 @@ def replaygain(filelist):
 	def run_loudgain(options, filetypes):
 		fl = []
 		for fn in filelist:
-			if os.path.splitext(fn.lower())[1] in filetypes:
+			if pathlib.Path(fn).suffix.lower() in filetypes:
 				fl.append(fn)
 		if len(fl) > 0:
 			cmd = shlex.split('loudgain ' + options)
@@ -179,10 +192,11 @@ def mixramp(fn):
 	try:
 		#  Convert the file to a WAV
 		tmp_wav = tempfile.NamedTemporaryFile(suffix='.wav').name
-		subprocess.run('ffmpeg -y -v quiet -i "{}" {}'.format(fn, tmp_wav), shell=True, check=True)
+		# "-ar 44100" because max audio sampling rate mixramp can handle = 96000Hz
+		subprocess.run('ffmpeg -y -v quiet -i "{}" -ar 44100 {}'.format(fn, tmp_wav), shell=True, check=True)
 	
 		#  Get the mixramp tag values
-		proc = subprocess.run('mixramp {}'.format(tmp_wav), shell=True, check=True, capture_output=True)
+		proc = subprocess.run('mixramp "{}"'.format(tmp_wav), shell=True, check=True, capture_output=True)
 		tags = proc.stdout.decode('utf-8').strip().split('\n')
 		
 		#  Put the tags into the audio file
@@ -218,7 +232,7 @@ def bpm(fn):
 #  Use various tools, depending on filetype, to put tags into files
 def write_tags(filename, taglist):
 	try:
-		ext = os.path.splitext(filename.lower())[1]
+		ext = pathlib.Path(filename).suffix.lower()
 		
 		if ext == '.flac':
 			options = ''
