@@ -77,7 +77,7 @@ def log(message):
 def command_exists(command):
 	if shutil.which(command['name']):
 		return True
-	log('This script requires the "{}" command {}'.format(command['name'], command['source']))
+	log('ERROR: This script requires the "{}" command {}'.format(command['name'], command['source']))
 	exit(1)
 
 #  Use ffprobe to see if a file contains replaygain, mixramp and bpm metadata tags
@@ -114,13 +114,13 @@ def check_metadata(fn):
 			if "BPM" in tags:
 				has_bpm = True
 	except subprocess.CalledProcessError as e:
-		log(e)
+		log('ERROR: {}'.format(e))
 		if e.stdout:
 			log('STDOUT:\n' + e.stdout.decode('utf-8'))
 		if e.stderr:
 			log('STDERR:\n' + e.stderr.decode('utf-8'))
 	except Exception as e:
-		log('Unexpected error while checking for existing metadata tags in "{}"'.format(fn))
+		log('ERROR: Unexpected error while checking for existing metadata tags in "{}"'.format(fn))
 		log(e)
 		if proc.stdout:
 			log('FFPROBE STDOUT:\n' + proc.stdout)
@@ -157,7 +157,7 @@ def process_files(filelist):
 
 #  Set replaygain tags across a list of files
 def replaygain(filelist):
-	log('Adding ReplayGain tags to {} ...\n'.format(', '.join(filelist)))
+	log('INFO: Adding ReplayGain tags to {} ...\n'.format(', '.join(filelist)))
 	
 	#  Generic function to run loadgain with different options for different filetypes
 	def run_loudgain(options, filetypes):
@@ -173,7 +173,7 @@ def replaygain(filelist):
 				if opts.quiet and opts.logfile:
 					log(proc.stdout)
 			except subprocess.CalledProcessError as e:
-				log(e)
+				log('ERROR: {}'.format(e))
 				if e.stdout:
 					log('STDOUT:\n' + e.stdout.decode('utf-8'))
 				if e.stderr:
@@ -187,7 +187,7 @@ def replaygain(filelist):
 	
 #  Set mixramp tags in a file
 def mixramp(fn):
-	log('Adding MixRamp tags to {} ...'.format(fn))
+	log('INFO: Adding MixRamp tags to {} ...'.format(fn))
 	
 	try:
 		#  Convert the file to a WAV
@@ -206,7 +206,7 @@ def mixramp(fn):
 		os.unlink(tmp_wav)
 		
 	except subprocess.CalledProcessError as e:
-		log(e)
+		log('ERROR: {}'.format(e))
 		if e.stdout:
 			log('STDOUT:\n' + e.stdout.decode('utf-8'))
 		if e.stderr:
@@ -214,7 +214,7 @@ def mixramp(fn):
 	
 #  Set bpm tag in a file
 def bpm(fn):
-	log('Adding BPM tag to {} ...'.format(fn))
+	log('INFO: Adding BPM tag to {} ...'.format(fn))
 	try:
 		#  Get the BPM value
 		proc = subprocess.run('sox -V1 "{}" -r 44100 -e float -c 1 -t raw - | bpm $ARGS'.format(fn), shell=True, check=True, capture_output=True)
@@ -223,7 +223,7 @@ def bpm(fn):
 		write_tags(fn, [ 'BPM={}'.format(proc.stdout.decode('utf-8').strip()) ]) 
 
 	except subprocess.CalledProcessError as e:
-		log(e)
+		log('ERROR: {}'.format(e))
 		if e.stdout:
 			log('STDOUT:\n' + e.stdout.decode('utf-8'))
 		if e.stderr:
@@ -261,7 +261,7 @@ def write_tags(filename, taglist):
 			log(tag)
 			
 	except subprocess.CalledProcessError as e:
-		log(e)
+		log('ERROR: {}'.format(e))
 		if e.stdout:
 			log('STDOUT:\n' + e.stdout.decode('utf-8'))
 		if e.stderr:
@@ -282,7 +282,7 @@ if __name__ == "__main__":
 		cmdline.print_usage()
 		exit()
 	if not os.path.isdir(folder):
-		log('"{}" is not a directory or does not exist.'.format(folder))
+		log('ERROR: "{}" is not a directory or does not exist.'.format(folder))
 		exit(1)
 
 	#  Check for required programs
@@ -297,7 +297,7 @@ if __name__ == "__main__":
 	
 	#  process any files in the top level folder
 	for root, dirs, files in os.walk(folder):
-		log('Processing directory "{}" ...'.format(root))
+		log('INFO: Processing directory "{}" ...'.format(root))
 		if len(files) > 0:
 			filelist = sorted([ os.path.join(root, n) for n in files ])
 			process_files(filelist)
@@ -306,9 +306,7 @@ if __name__ == "__main__":
 	#  process the files in all the subdirectories of the top level folder
 	for root, dirs, files in os.walk(folder):
 		for path in dirs:
-			log('Processing directory "{}" ...'.format(os.path.join(root, path)))
+			log('INFO: Processing directory "{}" ...'.format(os.path.join(root, path)))
 			for r, d, f in os.walk(os.path.join(root, path)):
 				filelist = sorted([ os.path.join(r, n) for n in f ])
 				process_files(filelist)
-				
-
